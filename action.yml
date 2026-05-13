@@ -1,0 +1,111 @@
+name: 'Issue AI Triage (Cursor Cloud Agent)'
+description: 'Start a Cursor Cloud Agent from a labeled issue with optional HTTPS images and PR auto-creation.'
+
+branding:
+  icon: tag
+  color: blue
+
+inputs:
+  triage-enqueued-label:
+    description: Label applied after the agent is successfully enqueued (idempotency).
+    default: ai-triage-enqueued
+  triage-branch-prefix:
+    description: 'Agent branch name is {prefix}-{issue_number}.'
+    default: ai-triage/fix-issue
+  triage-contributing-doc:
+    description: Filename referenced in the agent prompt for contribution conventions.
+    default: CONTRIBUTING.md
+  cursor-agents-url:
+    description: Cursor Cloud Agents API URL (v0 by default).
+    default: https://api.cursor.com/v0/agents
+  triage-base-ref:
+    description: Optional git ref sent as source.ref (branch, tag, or commit) to the Cursor API.
+    required: false
+    default: ''
+
+secrets:
+  cursor_api_key:
+    description: Cursor API key (from Cursor Dashboard Integrations or a service account).
+    required: true
+
+outputs:
+  should-run:
+    description: 'true if the guard allowed the run; the trigger step still may fail.'
+    value: ${{ steps.guard.outputs.should_run }}
+  agent-id:
+    description: Cursor agent id when the trigger step succeeded.
+    value: ${{ steps.trigger.outputs.cursor_agent_id }}
+  agent-url:
+    description: Cursor agent URL when returned by the API.
+    value: ${{ steps.trigger.outputs.cursor_agent_url }}
+  agent-status:
+    description: Cursor agent status string when returned by the API.
+    value: ${{ steps.trigger.outputs.cursor_agent_status }}
+
+runs:
+  using: composite
+  steps:
+    - id: guard
+      shell: bash
+      env:
+        ACTION_ROOT: ${{ github.action_path }}
+        GH_TOKEN: ${{ github.token }}
+        TRIAGE_ENQUEUED_LABEL: ${{ inputs.triage-enqueued-label }}
+        ISSUE_NUMBER: ${{ github.event.issue.number }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+      run: bash "${ACTION_ROOT}/scripts/triage.sh" guard
+
+    - id: trigger
+      if: steps.guard.outputs.should_run == 'true'
+      shell: bash
+      env:
+        ACTION_ROOT: ${{ github.action_path }}
+        CURSOR_API_KEY: ${{ secrets.cursor_api_key }}
+        ISSUE_NUMBER: ${{ github.event.issue.number }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+        TRIAGE_BRANCH_PREFIX: ${{ inputs.triage-branch-prefix }}
+        TRIAGE_CONTRIBUTING_DOC: ${{ inputs.triage-contributing-doc }}
+        CURSOR_AGENTS_URL: ${{ inputs.cursor-agents-url }}
+        TRIAGE_BASE_REF: ${{ inputs.triage-base-ref }}
+      run: bash "${ACTION_ROOT}/scripts/triage.sh" trigger
+
+    - name: Add triage enqueued label
+      if: steps.guard.outputs.should_run == 'true' && success()
+      shell: bash
+      env:
+        ACTION_ROOT: ${{ github.action_path }}
+        GH_TOKEN: ${{ github.token }}
+        TRIAGE_ENQUEUED_LABEL: ${{ inputs.triage-enqueued-label }}
+        ISSUE_NUMBER: ${{ github.event.issue.number }}
+        GITHUB_REPOSITORY: ${{ github.repository }}
+      run: bash "${ACTION_ROOT}/scripts/triage.sh" add-label
+
+    - name: Log success
+      if: steps.guard.outputs.should_run == 'true' && success()
+      shell: bash
+      run: |
+        echo ""
+        echo "✅ Cursor agent triggered for issue #${{ github.event.issue.number }}"
+        echo "Agent id: ${{ steps.trigger.outputs.cursor_agent_id }}"
+        echo "Agent URL: ${{ steps.trigger.outputs.cursor_agent_url }}"
+        echo "📊 Agent will analyze the issue and create a PR automatically"
+        echo ""
+
+    - name: Log skip
+      if: steps.guard.outputs.should_run == 'false'
+      shell: bash
+      run: |
+        echo ""
+        echo "⏭️ Skipping Cursor agent for issue #${{ github.event.issue.number }}"
+        echo "Reason: ${{ steps.guard.outputs.reason }}"
+        echo ""
+
+    - name: Log failure
+      if: steps.guard.outputs.should_run == 'true' && failure()
+      shell: bash
+      run: |
+        echo ""
+        echo "❌ Failed to trigger Cursor agent for issue #${{ github.event.issue.number }}"
+        echo "📄 Please check the logs above for the error details"
+        echo ""
+        echo "⚠️  Make sure the cursor_api_key secret passed into this action is valid"

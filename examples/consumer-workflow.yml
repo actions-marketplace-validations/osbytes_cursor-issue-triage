@@ -1,0 +1,33 @@
+# Example workflow for consumers (copy to `.github/workflows/` in YOUR repository).
+# GitHub Marketplace requires the *action repository* itself to contain **no** workflow files,
+# so this file lives under `examples/` here. Pin the action to a release tag (for example `@v1`).
+
+name: AI Triage - Cursor Agent
+
+on:
+  issues:
+    types:
+      - labeled
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  trigger-cursor-agent:
+    if: (vars.TRIAGE_TRIGGER_LABEL == '' && github.event.label.name == 'ai-triage') || github.event.label.name == vars.TRIAGE_TRIGGER_LABEL
+    runs-on: ubuntu-latest
+    concurrency:
+      group: cursor-issue-triage-${{ github.repository }}-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    steps:
+      - uses: YOUR_GITHUB_LOGIN/github-issue-ai-triage@v1
+        with:
+          triage-enqueued-label: ${{ vars.TRIAGE_ENQUEUED_LABEL || 'ai-triage-enqueued' }}
+          triage-branch-prefix: ${{ vars.TRIAGE_BRANCH_PREFIX || 'ai-triage/fix-issue' }}
+          triage-contributing-doc: ${{ vars.TRIAGE_CONTRIBUTING_DOC || 'CONTRIBUTING.md' }}
+          cursor-agents-url: ${{ vars.CURSOR_AGENTS_URL || 'https://api.cursor.com/v0/agents' }}
+          triage-base-ref: ${{ vars.TRIAGE_BASE_REF }}
+        secrets:
+          cursor_api_key: ${{ secrets.CURSOR_API_KEY }}
