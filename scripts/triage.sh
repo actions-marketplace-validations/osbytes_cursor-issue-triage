@@ -79,7 +79,7 @@ trigger() {
   body_tmp="$(mktemp)"
   trap 'rm -f "${body_tmp}" "${request_tmp}"' EXIT
   printf '%s' "${issue_body_raw}" > "${body_tmp}"
-  if printf '%s' "${issue_body_raw}" | grep -qP '!\[[^\]]*\]\(https://[^)]+\)|<img[^>]+src=["'\'']?https://'; then
+  if printf '%s' "${issue_body_raw}" | grep -qE '!\[[^\]]*\]\(https://[^)]+\)|<img[^>]+src=["'\'']?https://'; then
     issue_body_for_prompt="${issue_body}$(printf '\n\n## Issue images (multimodal)\n\nUp to five images from this issue are attached to this agent task in API order: first every markdown ![...](https://...) URL in body order, then every HTML <img src="https://..."> URL in body order, deduplicated. Prefer those image inputs when they are relevant to the task.\n')"
   fi
 

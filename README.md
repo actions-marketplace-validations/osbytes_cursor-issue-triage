@@ -1,60 +1,139 @@
-# github-issue-ai-triage
+# cursor-issue-triage
 
-Composite [GitHub Action](https://docs.github.com/en/actions/creating-actions/creating-a-composite-action) that starts a [Cursor Cloud Agent](https://cursor.com/docs/cloud-agent/api/v0) when an issue is labeled. The agent receives the issue text (and optional embedded HTTPS images), works in a dedicated branch, and can open a pull request that closes the issue.
+Composite GitHub Action that starts a [Cursor Cloud Agent](https://cursor.com/docs/cloud-agent/api/v0) when an issue is labeled. The agent receives the issue text (and optional embedded HTTPS images), works in a dedicated branch, and can open a pull request that closes the issue.
 
-## Use this action in your repository
+## Requirements
 
-1. Add a repository secret **`CURSOR_API_KEY`** ([Cursor Dashboard → Integrations](https://cursor.com/dashboard/integrations)).
-2. Create labels that match your configuration (defaults below).
-3. Copy `examples/consumer-workflow.yml` into **your** repo as `.github/workflows/<something>.yml`, replace `YOUR_GITHUB_LOGIN`, pin a version tag (for example `@v1`), and adjust variables as needed.
+- Standard GitHub-hosted runners (`ubuntu-latest`)
+- No additional setup required
+- No Python or external dependencies
 
-The consumer workflow owns **`permissions`**, **`concurrency`**, and the **`if`** that decides which label starts triage. The action owns the guard, Cursor API call, and enqueued label.
+## Quick Start
 
-### Default labels
+1. Add `CURSOR_API_KEY` secret to your repository (from [Cursor Dashboard](https://cursor.com/dashboard/integrations))
+2. Copy `examples/consumer-workflow.yml` to `.github/workflows/cursor-triage.yml` in your repository (the example pins [`osbytes/cursor-issue-triage@v1`](https://github.com/osbytes/cursor-issue-triage)).
+3. Label an issue with `ai-triage` to trigger the agent
 
-- **Trigger** (handled in *your* workflow `if`): `ai-triage` unless you set repository variable `TRIAGE_TRIGGER_LABEL`.
-- **Enqueued** (handled inside the action): `ai-triage-enqueued` unless you pass input `triage-enqueued-label` (often from `vars.TRIAGE_ENQUEUED_LABEL`).
+If you maintain your own fork of this action, change the `uses:` line to your fork’s `owner/repo` and tag.
 
-### Action inputs
+## Configuration
 
-| Input | Default | Purpose |
-| --- | --- | --- |
-| `triage-enqueued-label` | `ai-triage-enqueued` | Label added after a successful enqueue (idempotency). |
-| `triage-branch-prefix` | `ai-triage/fix-issue` | Branch name is `{prefix}-{issue_number}`. |
-| `triage-contributing-doc` | `CONTRIBUTING.md` | Referenced in the agent prompt. |
-| `cursor-agents-url` | `https://api.cursor.com/v0/agents` | Cursor API endpoint. |
-| `triage-base-ref` | *(empty)* | If set, sent as `source.ref` on the Cursor API. |
+### Inputs
 
-### Required secret (passed into the action)
+| Name | Default | Description |
+|------|---------|-------------|
+| `triage-enqueued-label` | `ai-triage-enqueued` | Label added after successful enqueue (idempotency) |
+| `triage-branch-prefix` | `ai-triage/fix-issue` | Branch name format: `{prefix}-{issue_number}` |
+| `triage-contributing-doc` | `CONTRIBUTING.md` | Documentation file referenced in agent prompt |
+| `cursor-agents-url` | `https://api.cursor.com/v0/agents` | Cursor API endpoint |
+| `triage-base-ref` | *(empty)* | Git ref sent as `source.ref` to Cursor API (branch, tag, or commit) |
 
-| Secret | Purpose |
-| --- | --- |
-| `cursor_api_key` | Map from your repo secret, e.g. `cursor_api_key: ${{ secrets.CURSOR_API_KEY }}`. |
+### Secrets
 
-### Action outputs
+| Name | Required | Description |
+|------|----------|-------------|
+| `cursor_api_key` | Yes | Cursor API key from dashboard or service account |
 
-| Output | Meaning |
-| --- | --- |
-| `should-run` | Guard result from the action (`true` means the trigger step was allowed to run). |
-| `agent-id`, `agent-url`, `agent-status` | Populated when the Cursor API returns an agent id. |
+### Outputs
+
+| Name | Description |
+|------|-------------|
+| `should-run` | Guard result (`true` if trigger was allowed) |
+| `agent-id` | Cursor agent ID (when API returns one) |
+| `agent-url` | Cursor agent URL (when API returns one) |
+| `agent-status` | Cursor agent status string |
+
+## Usage Example
+
+```yaml
+name: AI Triage - Cursor Agent
+
+on:
+  issues:
+    types:
+      - labeled
+
+permissions:
+  contents: read
+  issues: write
+  pull-requests: read
+
+jobs:
+  trigger-cursor-agent:
+    if: github.event.label.name == 'ai-triage'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: cursor-issue-triage-${{ github.repository }}-${{ github.event.issue.number }}
+      cancel-in-progress: false
+    steps:
+      - uses: osbytes/cursor-issue-triage@v1
+        with:
+          triage-enqueued-label: ai-triage-enqueued
+          triage-branch-prefix: ai-triage/fix-issue
+        secrets:
+          cursor_api_key: ${{ secrets.CURSOR_API_KEY }}
+```
+
+## How It Works
+
+1. **Guard step** - Checks if issue already has enqueued label or linked PR (skips if yes)
+2. **Trigger step** - Sends issue content to Cursor Cloud Agents API with:
+   - Issue title, body, labels, and state
+   - Up to 5 embedded HTTPS images (base64 encoded)
+   - Branch name and repository information
+   - Custom prompt with instructions to close the issue
+3. **Label step** - Adds enqueued label to prevent duplicate runs
+
+## Image Support
+
+The action automatically extracts up to 5 HTTPS images from the issue body:
+- Markdown images: `![alt](https://...)`
+- HTML images: `<img src="https://...">`
+
+Images are fetched, base64-encoded, and sent to the Cursor API as multimodal inputs. Failed image fetches are silently skipped.
+
+## Troubleshooting
+
+| Problem | Solution |
+|---------|----------|
+| Action fails with "CURSOR_API_KEY not set" | Add `CURSOR_API_KEY` secret to repository settings |
+| Agent not triggered on label | Verify label name matches workflow `if` condition |
+| "Failed to trigger Cursor agent" | Check API key validity in Cursor Dashboard |
+| Images not appearing in agent context | Verify images are HTTPS URLs (HTTP not supported) |
+| Action runs but skips immediately | Issue already has `ai-triage-enqueued` label or linked PR |
+
+## Security
+
+- `GITHUB_TOKEN` never leaves GitHub Actions infrastructure
+- Only issue content (title, body, labels) is sent to Cursor API
+- API key is stored as encrypted GitHub secret
+- No credentials are logged or exposed in action output
+
+## Repository Variables (Optional)
+
+Configure these in repository settings to customize behavior:
+
+| Variable | Default | Purpose |
+|----------|---------|---------|
+| `TRIAGE_TRIGGER_LABEL` | `ai-triage` | Label that triggers triage (configured in workflow) |
+| `TRIAGE_ENQUEUED_LABEL` | `ai-triage-enqueued` | Label added after enqueue |
+| `TRIAGE_BRANCH_PREFIX` | `ai-triage/fix-issue` | Branch name prefix |
+| `TRIAGE_CONTRIBUTING_DOC` | `CONTRIBUTING.md` | Contributing guidelines file |
+| `CURSOR_AGENTS_URL` | `https://api.cursor.com/v0/agents` | Cursor API endpoint |
+| `TRIAGE_BASE_REF` | *(empty)* | Source git ref for Cursor API |
 
 ## Publishing to GitHub Marketplace
 
-Official requirements include: public repository, a **single** `action.yml` at the **repository root**, a **unique** `name` in `action.yml`, and (per current GitHub documentation) **no workflow files** in that same repository ([Publishing actions in GitHub Marketplace](https://docs.github.com/en/actions/how-tos/create-and-publish-actions/publish-in-github-marketplace)).
+This action is published to GitHub Marketplace. To use it:
 
-That is why this repo ships an **example** workflow under `examples/` instead of `.github/workflows/`. To publish:
+1. Pin to a specific version tag (e.g., `@v1` or `@v1.0.0`)
+2. Floating `v1` branch tracks the latest v1.x release
 
-1. Accept the **GitHub Marketplace Developer Agreement** (linked from the release UI when you publish).
-2. Ensure `action.yml` passes validation (banner on the file in the GitHub UI).
-3. **Draft a release**, choose a SemVer tag (for example `v1.0.0`), check **Publish this Action to the GitHub Marketplace**, pick categories, publish with 2FA enabled.
-4. Consumers pin `uses: your-login/github-issue-ai-triage@v1` (moving `v1` via branch or tag is optional; many actions use a floating `v1` branch updated to the latest `v1.x` commit).
-
-If you need **CI workflows** (lint, integration tests) in the same GitHub repo, GitHub’s Marketplace rule conflicts with that layout; common patterns are a **separate private or internal repo** for CI, or a **fork** that adds `.github/workflows/` only for development and never publishes that fork to the Marketplace.
-
-## Images in issues
-
-`scripts/encode-cursor-issue-images.sh` extracts up to five HTTPS image URLs from the issue body (Markdown `![...](https://...)` first, then HTML `<img src="https://...">`), fetches them, base64-encodes them, and passes them to the v0 API as `prompt.images`.
+To publish updates:
+1. Create a new release with SemVer tag (e.g., `v1.1.0`)
+2. Update `v1` branch to point to new release
+3. Marketplace automatically picks up the new version
 
 ## License
 
-MIT — see [LICENSE](./LICENSE).
+MIT - see [LICENSE](./LICENSE)
