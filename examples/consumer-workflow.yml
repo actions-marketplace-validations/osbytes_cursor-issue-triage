@@ -22,7 +22,7 @@ jobs:
       group: cursor-issue-triage-${{ github.repository }}-${{ github.event.issue.number }}
       cancel-in-progress: false
     steps:
-      - uses: YOUR_GITHUB_LOGIN/github-issue-ai-triage@v1
+      - uses: osbytes/cursor-issue-triage@v1
         with:
           triage-enqueued-label: ${{ vars.TRIAGE_ENQUEUED_LABEL || 'ai-triage-enqueued' }}
           triage-branch-prefix: ${{ vars.TRIAGE_BRANCH_PREFIX || 'ai-triage/fix-issue' }}
